@@ -9,7 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
-    libpq-dev \
+    default-libmysqlclient-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -24,8 +25,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Expose port
-EXPOSE 8000
+# Make init script executable
+RUN chmod +x init_db.py
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Initialize database and run the application
+CMD ["sh", "-c", "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

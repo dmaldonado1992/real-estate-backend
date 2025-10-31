@@ -5,30 +5,10 @@ import os
 from datetime import date
 from .models import Product
 from .utils import CustomJSONEncoder
-
-# Obtener la ruta absoluta al directorio de datos
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_FILE = os.path.join(BASE_DIR, 'app', 'data', 'products.json')
+from .llm_service import LLMService
+from .database import db
 
 router = APIRouter()
-
-# Lista para almacenar los productos
-products = []
-
-# Cargar productos iniciales desde el archivo JSON
-try:
-    with open(DATA_FILE, "r", encoding='utf-8') as file:
-        products = json.load(file)
-        # Convertir las fechas de string a objetos date
-        for product in products:
-            if isinstance(product.get("fecha_publicacion"), str):
-                product["fecha_publicacion"] = date.fromisoformat(product["fecha_publicacion"])
-except FileNotFoundError:
-    products = []
-    # Crear el archivo si no existe
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w", encoding='utf-8') as file:
-        json.dump(products, file, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
 
 @router.get("/api/products", response_model=List[Product], 
              summary="Obtener todos los productos",
@@ -40,8 +20,12 @@ async def get_products():
     Returns:
         List[Product]: Lista de productos ordenados por fecha de publicación
     """
-    # Ordenar productos por fecha de publicación (más recientes primero)
-    return sorted(products, key=lambda x: x.get('fecha_publicacion', ''), reverse=True)
+    properties = db.get_all_properties()
+    # Convertir las fechas de string a objetos date para compatibilidad
+    for prop in properties:
+        if isinstance(prop.get("fecha_publicacion"), str):
+            prop["fecha_publicacion"] = date.fromisoformat(prop["fecha_publicacion"])
+    return properties
 
 @router.get("/api/products/{product_id}",
              response_model=Product,
@@ -60,10 +44,15 @@ async def get_product(product_id: int):
     Raises:
         HTTPException: Si el producto no se encuentra (404)
     """
-    for product in products:
-        if product["id"] == product_id:
-            return product
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    product = db.get_property_by_id(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    # Convertir fecha si es necesario
+    if isinstance(product.get("fecha_publicacion"), str):
+        product["fecha_publicacion"] = date.fromisoformat(product["fecha_publicacion"])
+    
+    return product
 
 @router.post("/api/products", 
               response_model=Product,
@@ -79,15 +68,8 @@ async def create_product(product: Product):
     Returns:
         Product: Producto creado con su ID asignado
     """
-    # Asignar un nuevo ID
-    if products:
-        new_id = max(p["id"] for p in products) + 1
-    else:
-        new_id = 1
-    
     try:
         product_dict = product.dict()
-        product_dict["id"] = new_id
         
         # Asignar la fecha actual si no se proporciona una
         if not product_dict.get("fecha_publicacion"):
@@ -95,17 +77,12 @@ async def create_product(product: Product):
         elif isinstance(product_dict.get("fecha_publicacion"), str):
             product_dict["fecha_publicacion"] = date.fromisoformat(product_dict["fecha_publicacion"])
             
-        products.append(product_dict)
+        created_product = db.create_property(product_dict)
+        if not created_product:
+            raise HTTPException(status_code=500, detail="Error al guardar el producto en la base de datos")
         
-        # Guardar en el archivo JSON usando la ruta absoluta y el codificador personalizado
-        with open(DATA_FILE, "w", encoding='utf-8') as file:
-            json.dump(products, file, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
-        
-        return product_dict
+        return created_product
     except Exception as e:
-        # Si hay un error, eliminar el producto de la lista y lanzar excepción
-        if product_dict in products:
-            products.remove(product_dict)
         raise HTTPException(status_code=500, detail=f"Error al guardar el producto: {str(e)}")
 
 @router.put("/api/products/{product_id}", 
@@ -126,26 +103,18 @@ async def update_product(product_id: int, updated_product: Product):
     Raises:
         HTTPException: Si el producto no se encuentra (404)
     """
-    for i, product in enumerate(products):
-        if product["id"] == product_id:
-            try:
-                updated_dict = updated_product.dict()
-                updated_dict["id"] = product_id
-                if isinstance(updated_dict.get("fecha_publicacion"), str):
-                    updated_dict["fecha_publicacion"] = date.fromisoformat(updated_dict["fecha_publicacion"])
-                old_product = products[i]  # Guardar el producto anterior
-                products[i] = updated_dict
-                
-                # Guardar en el archivo JSON usando la ruta absoluta y el codificador personalizado
-                with open(DATA_FILE, "w", encoding='utf-8') as file:
-                    json.dump(products, file, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
-                
-                return updated_dict
-            except Exception as e:
-                # Si hay un error, restaurar el producto anterior
-                products[i] = old_product
-                raise HTTPException(status_code=500, detail=f"Error al actualizar el producto: {str(e)}")
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    try:
+        updated_dict = updated_product.dict()
+        if isinstance(updated_dict.get("fecha_publicacion"), str):
+            updated_dict["fecha_publicacion"] = date.fromisoformat(updated_dict["fecha_publicacion"])
+        
+        updated_property = db.update_property(product_id, updated_dict)
+        if not updated_property:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+        
+        return updated_property
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar el producto: {str(e)}")
 
 @router.delete("/api/products/{product_id}",
                 summary="Eliminar un producto",
@@ -163,18 +132,93 @@ async def delete_product(product_id: int):
     Raises:
         HTTPException: Si el producto no se encuentra (404)
     """
-    for i, product in enumerate(products):
-        if product["id"] == product_id:
-            try:
-                removed_product = products.pop(i)
-                
-                # Guardar en el archivo JSON usando la ruta absoluta y el codificador personalizado
-                with open(DATA_FILE, "w", encoding='utf-8') as file:
-                    json.dump(products, file, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
-                
-                return {"message": "Producto eliminado"}
-            except Exception as e:
-                # Si hay un error, restaurar el producto eliminado
-                products.insert(i, removed_product)
-                raise HTTPException(status_code=500, detail=f"Error al eliminar el producto: {str(e)}")
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    try:
+        deleted = db.delete_property(product_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+        
+        return {"message": "Producto eliminado"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar el producto: {str(e)}")
+
+# Inicializar el servicio LLM usando únicamente Ollama local
+llm_service = LLMService(model_name="llama3.2:1b")
+
+@router.get("/api/llm/test",
+            summary="Probar conexión con Ollama local",
+            description="Prueba la conexión únicamente con Ollama local")
+async def test_llm():
+    """
+    Prueba la conexión con los proveedores LLM disponibles
+    
+    Returns:
+        dict: Estado de la conexión y proveedor activo
+    """
+    try:
+        is_working = await llm_service.test_connection()
+        
+        current_provider = "Ollama Local"
+        if is_working:
+            return {
+                "status": "success",
+                "message": "Ollama local funcionando correctamente",
+                "provider": current_provider,
+                "provider_code": llm_service.provider
+            }
+        else:
+            return {"status": "error", "message": "No se pudo conectar con Ollama local", "provider": current_provider}
+    except Exception as e:
+        return {"status": "error", "message": f"Error al probar LLM: {str(e)}"}
+
+# Eliminada la ruta de validación multi-proveedor para forzar uso único de Ollama local
+
+@router.post("/api/llm/description",
+             summary="Generar descripción de producto con LLM",
+             description="Genera una descripción atractiva usando Ollama local")
+async def generate_product_description(product_name: str):
+    """
+    Genera una descripción de producto usando el mejor proveedor disponible
+    
+    Args:
+        product_name (str): Nombre del producto
+        
+    Returns:
+        dict: Descripción generada y proveedor usado
+    """
+    try:
+        description = await llm_service.get_product_description(product_name)
+        
+        return {
+            "product_name": product_name,
+            "description": description,
+            "provider": "Ollama Local",
+            "provider_code": llm_service.provider
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar descripción: {str(e)}")
+
+@router.post("/api/llm/recommendations",
+             summary="Generar recomendaciones con LLM",
+             description="Genera recomendaciones de productos relacionados usando Ollama local")
+async def generate_recommendations(product_description: str, num_recommendations: int = 3):
+    """
+    Genera recomendaciones de productos usando el mejor proveedor disponible
+    
+    Args:
+        product_description (str): Descripción del producto base
+        num_recommendations (int): Número de recomendaciones a generar
+        
+    Returns:
+        dict: Lista de recomendaciones y proveedor usado
+    """
+    try:
+        recommendations = await llm_service.get_product_recommendations(product_description, num_recommendations)
+        
+        return {
+            "base_product": product_description,
+            "recommendations": recommendations,
+            "provider": "Ollama Local",
+            "provider_code": llm_service.provider
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar recomendaciones: {str(e)}")
