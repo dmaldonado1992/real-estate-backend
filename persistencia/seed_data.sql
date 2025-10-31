@@ -1,0 +1,31 @@
+CREATE TABLE propiedades (
+    id SERIAL PRIMARY KEY,
+    titulo VARCHAR(255),
+    descripcion TEXT,
+    tipo VARCHAR(50),
+    precio DECIMAL(12,2),
+    habitaciones INT,
+    banos DECIMAL(2,1),
+    area_m2 DECIMAL(8,2),
+    ubicacion VARCHAR(255),
+    fecha_publicacion DATE,
+    imagen_url VARCHAR(512)
+);
+
+INSERT INTO propiedades (titulo, descripcion, tipo, precio, habitaciones, banos, area_m2, ubicacion, fecha_publicacion, imagen_url) VALUES
+('Casa Moderna en la Colina', 'Espectacular residencia con acabados de lujo, amplios ventanales y diseño contemporáneo. Cocina equipada con electrodomésticos de alta gama, sala de estar con doble altura y jardín paisajístico.', 'casa', 450000.00, 3, 2.5, 280.00, 'Colina del Valle, Zona Residencial', '2025-10-15', 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6'),
+('Apartamento de Lujo Centro', 'Exclusivo apartamento con vistas panorámicas de la ciudad. Amenidades premium incluyen gimnasio equipado, piscina climatizada, área social y seguridad 24/7.', 'departamento', 280000.00, 2, 2.0, 120.00, 'Centro Histórico', '2025-10-16', 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00'),
+('Casa Familiar Suburbana', 'Amplia residencia ideal para familias, con espacios versátiles y excelente iluminación natural. Incluye sala de juegos, oficina y patio trasero perfecto para actividades al aire libre.', 'casa', 385000.00, 4, 3.0, 320.00, 'Suburbia Residencial', '2025-10-17', 'https://images.unsplash.com/photo-1568605114967-8130f3a36994'),
+('Penthouse de Lujo', 'Impresionante ático con acabados premium, terraza privada y vistas al mar. Incluye 2 estacionamientos y cuarto de servicio.', 'departamento', 750000.00, 3, 3.5, 200.00, 'Zona Financiera', '2025-10-18', 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750'),
+('Casa de Campo', 'Hermosa propiedad rural con amplios espacios verdes, establos y huerto orgánico. Perfecta para amantes de la naturaleza.', 'casa', 520000.00, 3, 2.0, 450.00, 'Valle Campestre', '2025-10-19', 'https://images.unsplash.com/photo-1570129477492-45c003edd2be'),
+('Apartamento Moderno', 'Unidad completamente renovada con acabados modernos, balcón privado y excelente ubicación.', 'departamento', 225000.00, 2, 2.0, 95.00, 'Distrito Moderno', '2025-10-20', 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267'),
+('Terreno Residencial Premium', 'Excelente lote en zona exclusiva, ideal para construcción de residencia de lujo. Todos los servicios disponibles.', 'terreno', 180000.00, 0, 0.0, 800.00, 'Colinas del Este', '2025-10-21', 'https://images.unsplash.com/photo-1500382017468-9049fed747ef'),
+('Casa Minimalista', 'Diseño contemporáneo con énfasis en espacios limpios y funcionales. Perfecta para amantes del estilo moderno.', 'casa', 395000.00, 3, 2.5, 185.00, 'Distrito Artístico', '2025-10-22', 'https://images.unsplash.com/photo-1523217582562-09d0def993a6'),
+('Departamento Céntrico', 'Ubicación privilegiada cerca de restaurantes, comercios y transporte público. Ideal para profesionales jóvenes.', 'departamento', 195000.00, 1, 1.0, 65.00, 'Centro de la Ciudad', '2025-10-23', 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688'),
+('Casa con Vista al Lago', 'Espectacular residencia frente al lago con muelle privado y amplias terrazas para entretenimiento.', 'casa', 680000.00, 4, 3.5, 380.00, 'Zona Lacustre', '2025-10-24', 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750'),
+('Terreno Comercial', 'Excelente oportunidad de inversión en zona de alto crecimiento. Ideal para desarrollo comercial.', 'terreno', 420000.00, 0, 0.0, 1200.00, 'Distrito Comercial', '2025-10-25', 'https://images.unsplash.com/photo-1474366521946-c3d4b507abf2'),
+('Loft Industrial', 'Espacio único con diseño industrial, techos altos y acabados en concreto pulido. Perfecto para artistas.', 'departamento', 245000.00, 1, 1.5, 110.00, 'Distrito Creativo', '2025-10-26', 'https://images.unsplash.com/photo-1536376072261-38c75010e6c9'),
+('Casa Inteligente', 'Residencia totalmente automatizada con sistemas de última generación. Control por voz y app móvil.', 'casa', 595000.00, 4, 3.0, 290.00, 'Tecnópolis', '2025-10-27', 'https://images.unsplash.com/photo-1558036117-15d82a90b9b1'),
+('Penthouse Dúplex', 'Impresionante unidad de dos niveles con sala de cine, área de bar y terraza panorámica.', 'departamento', 890000.00, 4, 4.5, 320.00, 'Zona Premium', '2025-10-28', 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750'),
+('Casa Sustentable', 'Diseño ecológico con paneles solares, sistema de captación de agua y materiales sustentables.', 'casa', 485000.00, 3, 2.5, 220.00, 'Eco Villa', '2025-10-29', 'https://images.unsplash.com/photo-1505873242700-f289a29e1e0f'),
+('Terreno con Vista al Mar', 'Extraordinaria oportunidad de inversión con vista panorámica al océano. Ideal para desarrollo residencial.', 'terreno', 350000.00, 0, 0.0, 1500.00, 'Costa Dorada', '2025-10-30', 'https://images.unsplash.com/photo-1565593735391-15c11e925d58');
