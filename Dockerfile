@@ -11,6 +11,7 @@ RUN apt-get update \
     build-essential \
     default-libmysqlclient-dev \
     pkg-config \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -25,8 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Make init script executable
-RUN chmod +x init_db.py
+# Make init scripts executable
+RUN chmod +x init_db.py wait_for_db.py
 
 # Initialize database and run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD python wait_for_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

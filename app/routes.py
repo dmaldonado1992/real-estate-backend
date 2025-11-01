@@ -1,8 +1,9 @@
 ﻿from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Product
+from .models import Product, SearchIARequest, SearchIAResponse, SearchRealStateRequest, SearchRealStateResponse
 from .services.property_service import IPropertyService
 from .dependencies import get_property_service
+from .services.llm_service import LLMService
 
 router = APIRouter()
 
@@ -37,3 +38,63 @@ async def delete_product(product_id: int, service: IPropertyService = Depends(ge
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Producto con ID {product_id} no encontrado")
     return None
+
+
+@router.post("/api/search-ia", response_model=SearchIAResponse, tags=["IA"])
+async def search_con_ia(request: SearchIARequest) -> SearchIAResponse:
+    """
+    Endpoint para realizar búsquedas inteligentes usando IA en la nube.
+    
+    Utiliza el modelo deepseek-v3.1:671b-cloud para proporcionar respuestas
+    inteligentes sobre propiedades, productos y consultas de bienes raíces.
+    
+    Args:
+        request: SearchIARequest con query, context opcional y use_cloud
+    
+    Returns:
+        SearchIAResponse con la respuesta de la IA y metadata
+    """
+    try:
+        llm_service = LLMService()
+        result = await llm_service.search_con_ia(
+            query=request.query,
+            context=request.context,
+            use_cloud=request.use_cloud
+        )
+        return SearchIAResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error en búsqueda con IA: {str(e)}"
+        )
+
+
+@router.post("/api/search-ia-real-state", response_model=SearchRealStateResponse, tags=["IA"])
+async def search_ia_real_state(request: SearchRealStateRequest) -> SearchRealStateResponse:
+    """
+    Búsqueda inteligente de propiedades combinando IA con base de datos.
+    
+    Proceso:
+    1. Obtiene todas las propiedades de la BD
+    2. Usa IA (deepseek-v3.1:671b-cloud) para extraer keywords de la consulta
+    3. Filtra propiedades usando LIKE con las keywords sugeridas
+    4. Retorna resultados con análisis inteligente de la IA
+    
+    Args:
+        request: SearchRealStateRequest con query y use_cloud
+    
+    Returns:
+        SearchRealStateResponse con propiedades filtradas, keywords y análisis
+    """
+    try:
+        llm_service = LLMService()
+        result = await llm_service.search_ia_real_state(
+            query=request.query,
+            use_cloud=request.use_cloud
+        )
+        return SearchRealStateResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error en búsqueda de propiedades con IA: {str(e)}"
+        )

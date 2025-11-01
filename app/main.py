@@ -26,6 +26,13 @@ app.add_middleware(
 # Montar archivos estáticos para Swagger UI
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    """
+    Endpoint de health check para Docker
+    """
+    return {"status": "ok", "service": "backend-api"}
+
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
     """

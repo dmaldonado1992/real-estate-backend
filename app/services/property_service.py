@@ -120,8 +120,26 @@ class PropertyService(IPropertyService):
         """
         Obtener todas las propiedades como modelos Product
         Aplica lógica de negocio (ordenamiento, transformación)
+        Con fallback a JSON si no hay datos en BD
         """
         properties_dict = self.repository.find_all()
+        
+        # Si no hay propiedades, intentar cargar desde JSON
+        if not properties_dict or len(properties_dict) == 0:
+            import json
+            import os
+            
+            try:
+                json_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'products.json')
+                if os.path.exists(json_path):
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        json_data = json.load(f)
+                        print(f"PropertyService: Cargando {len(json_data)} propiedades desde JSON como fallback")
+                        properties_dict = json_data
+            except Exception as e:
+                print(f"Error al cargar JSON fallback en PropertyService: {e}")
+                properties_dict = []
+        
         return [self.mapper.to_product(prop) for prop in properties_dict]
     
     def get_property_by_id(self, property_id: int) -> Optional[Product]:

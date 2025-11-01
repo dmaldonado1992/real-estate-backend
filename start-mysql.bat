@@ -4,49 +4,48 @@ echo   INICIANDO MYSQL EN DOCKER
 echo ====================================
 echo.
 
-REM Paso 1: Eliminar contenedor anterior si existe
-echo [1/5] Eliminando contenedor mysql-db anterior (si existe)...
-docker rm -f mysql-db 2>nul
-if %errorlevel% equ 0 (
-    echo       Contenedor anterior eliminado
-) else (
-    echo       No habia contenedor anterior
-)
-echo.
+REM Usar docker-compose desde backend/mysql
+cd mysql
 
-REM Paso 2: Verificar que Docker este corriendo
-echo [2/5] Verificando Docker...
-docker info >nul 2>&1
-if %errorlevel% neq 0 (
-    echo       ERROR: Docker no esta corriendo. Inicia Docker Desktop.
+if not exist docker-compose.yml (
+    echo ERROR: No se encontró docker-compose.yml en backend\mysql
+    cd ..
     pause
     exit /b 1
 )
-echo       Docker OK
-echo.
 
-REM Paso 3: Crear contenedor MySQL con base de datos
-echo [3/5] Creando contenedor MySQL (puede tardar si descarga la imagen)...
-docker run --name mysql-db ^
-    -e MYSQL_ROOT_PASSWORD=rootpassword ^
-    -e MYSQL_DATABASE=propiedades_db ^
-    -p 3306:3306 ^
-    -v "%cd%\persistencia:/docker-entrypoint-initdb.d:ro" ^
-    -d mysql:8.0
+echo [1/2] Deteniendo contenedores previos...
+docker-compose down 2>nul
+
+echo.
+echo [2/2] Iniciando MySQL con docker-compose...
+docker-compose up -d
 
 if %errorlevel% neq 0 (
-    echo       ERROR: No se pudo crear el contenedor
+    echo.
+    echo ERROR: No se pudo iniciar MySQL
+    cd ..
     pause
     exit /b 1
 )
-echo       Contenedor creado exitosamente
+
+echo.
+echo ✅ MySQL iniciado correctamente
+echo.
+echo 📊 Información de conexión:
+echo    Host: localhost
+echo    Puerto: 3306
+echo    Usuario: root
+echo    Password: rootpassword
+echo    Base de datos: propiedades_db
+echo.
+echo Comandos útiles:
+echo    Ver logs: cd mysql; docker-compose logs -f
+echo    Detener: cd mysql; docker-compose down
 echo.
 
-REM Paso 4: Esperar a que MySQL este listo
-echo [4/5] Esperando a que MySQL este listo (30 segundos)...
-timeout /t 30 /nobreak >nul
-echo       Tiempo de espera completado
-echo.
+cd ..
+pause
 
 REM Paso 5: Verificar logs
 echo [5/5] Verificando logs de MySQL...
