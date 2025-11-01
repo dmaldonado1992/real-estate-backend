@@ -20,43 +20,43 @@ backend/
 └── docker-compose.yml
 ```
 
-## Configuración
+## Configuración (local-only)
 
-1. Copia `.env.example` a `.env` y configura las variables de entorno:
-```bash
-cp .env.example .env
-```
+Este backend está preparado para funcionar con Ollama local y una base de datos
+local (la composición final del sistema está en el `docker-compose.yml` raíz).
 
-2. Edita `.env` y agrega tu API key de OpenAI:
-```
-OPENAI_API_KEY=tu-api-key-aqui
-```
+Pasos recomendados:
 
-## Ejecución
+- 1) Asegúrate de tener Ollama corriendo localmente en http://127.0.0.1:11434.
+- 2) Si usas Docker, utiliza el `docker-compose.yml` en la raíz del repo:
 
-### Con Docker:
-
-```bash
+```powershell
+cd "C:\Users\Daniel Maldonado\Documents\vue"
 docker-compose up --build
 ```
 
-### Sin Docker:
+### Ejecutar sin Docker (desarrollo)
 
-1. Crea un entorno virtual:
-```bash
+1. Crea y activa un entorno virtual:
+
+```powershell
 python -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
+venv\Scripts\activate
 ```
 
-2. Instala las dependencias:
-```bash
+2. Instala dependencias:
+
+```powershell
 pip install -r requirements.txt
 ```
 
-3. Inicia el servidor:
-```bash
-uvicorn app.main:app --reload
+3. Inicia el backend:
+
+```powershell
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Visita http://127.0.0.1:8000/docs para la documentación de la API.
 
 ## API Endpoints
 

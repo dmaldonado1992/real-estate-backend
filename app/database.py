@@ -12,8 +12,8 @@ class Database:
     def __init__(self):
         self.config = {
             'host': os.getenv('DB_HOST', 'mysql'),
-            'user': os.getenv('DB_USER', 'appuser'),
-            'password': os.getenv('DB_PASSWORD', 'apppass'),
+            'user': os.getenv('DB_USER', 'root'),
+            'password': os.getenv('DB_PASSWORD', 'rootpassword'),
             'database': os.getenv('DB_NAME', 'propiedades_db')
         }
         self.connection = None
@@ -41,10 +41,9 @@ class Database:
         try:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute("""
-                SELECT id, titulo as name, descripcion as description,
-                       precio as price, habitaciones, banos, area_m2,
-                       ubicacion as location, fecha_publicacion as fecha_publicacion,
-                       imagen_url as image
+                SELECT id, titulo, descripcion, tipo, precio, 
+                       habitaciones, banos, area_m2,
+                       ubicacion, fecha_publicacion, imagen_url
                 FROM propiedades
                 ORDER BY fecha_publicacion DESC
             """)
@@ -64,10 +63,9 @@ class Database:
         try:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute("""
-                SELECT id, titulo as name, descripcion as description,
-                       precio as price, habitaciones, banos, area_m2,
-                       ubicacion as location, fecha_publicacion as fecha_publicacion,
-                       imagen_url as image
+                SELECT id, titulo, descripcion, tipo, precio,
+                       habitaciones, banos, area_m2,
+                       ubicacion, fecha_publicacion, imagen_url
                 FROM propiedades
                 WHERE id = %s
             """, (property_id,))

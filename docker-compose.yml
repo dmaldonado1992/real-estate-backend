@@ -7,8 +7,6 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
@@ -26,3 +24,11 @@ services:
 
 volumes:
   postgres_data:
+# This backend-level docker-compose file has been deprecated.
+# Use the top-level `docker-compose.yml` at the repository root which
+# defines the full stack (mysql, backend, frontend) and does not include
+# any cloud provider environment variables.
+
+# The original file referenced OpenAI and Postgres. Those references were
+# removed to ensure the project uses Ollama local only and the canonical
+# compose file is the one at the repo root.
