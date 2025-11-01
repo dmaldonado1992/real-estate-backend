@@ -3,7 +3,10 @@ FROM python:3.9-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # Install system dependencies
 RUN apt-get update \
@@ -29,8 +32,9 @@ COPY . .
 # Copy persistence files
 COPY persistencia/ /app/persistencia/
 
-# Make init scripts executable
-RUN chmod +x init_db.py
+# Copy and make scripts executable
+COPY cleanup.sh start.sh ./
+RUN chmod +x init_db.py cleanup.sh start.sh
 
-# Initialize database and run the application
-CMD python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Initialize database and run the application with cleanup
+CMD ["./start.sh"]
