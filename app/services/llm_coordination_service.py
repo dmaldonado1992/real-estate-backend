@@ -33,8 +33,8 @@ class LLMService:
         try:
             logger.info(f"Iniciando búsqueda IA para: '{query}'")
             
-            # 1. Cargar propiedades desde base de datos o JSON
-            data_result = self.data_loader.load_properties_from_db_or_json_with_query()
+            # 1. Cargar propiedades generando SQL específico para la consulta
+            data_result = self.data_loader.load_properties_from_generated_query_with_info(query)
             properties = data_result.get('properties', [])
             
             if not properties:
@@ -42,10 +42,10 @@ class LLMService:
                 return {
                     'properties': [],
                     'keywords': self._extract_keywords(query),
-                    'analysis': 'No hay propiedades disponibles en la base de datos.',
+                    'analysis': 'No se encontraron propiedades que coincidan con la consulta.',
                     'metadata': {
                         'total_found': 0,
-                        'search_strategy': 'none',
+                        'search_strategy': 'sql_generated',
                         'data_source': data_result.get('data_source', 'none'),
                         'generated_sql': data_result.get('generated_sql'),
                         'user_query': query,
