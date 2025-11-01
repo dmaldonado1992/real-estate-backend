@@ -3,7 +3,7 @@ from typing import List
 from .models import Product, SearchIARequest, SearchIAResponse, SearchRealStateRequest, SearchRealStateResponse
 from .services.property_service import IPropertyService
 from .dependencies import get_property_service
-from .services.llm_service import LLMService
+from .services.llm_coordination_service import LLMService
 
 router = APIRouter()
 
