@@ -4,7 +4,7 @@ Implementa la lógica de negocio separada del acceso a datos
 Sigue principios SOLID: SRP, OCP, DIP
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import date
 from ..models import Product
 from ..repositories.property_repository import IPropertyRepository
@@ -17,8 +17,8 @@ class IPropertyService(ABC):
     """
     
     @abstractmethod
-    def get_all_properties(self) -> List[Product]:
-        """Obtener todas las propiedades"""
+    def get_all_properties(self) -> Dict[str, Any]:
+        """Obtener todas las propiedades con información SQL"""
         pass
     
     @abstractmethod
@@ -116,13 +116,15 @@ class PropertyService(IPropertyService):
         self.repository = repository
         self.mapper = PropertyMapper()
     
-    def get_all_properties(self) -> List[Product]:
+    def get_all_properties(self) -> Dict[str, Any]:
         """
-        Obtener todas las propiedades como modelos Product
+        Obtener todas las propiedades como modelos Product con información SQL
         Aplica lógica de negocio (ordenamiento, transformación)
         Con fallback a JSON si no hay datos en BD
         """
-        properties_dict = self.repository.find_all()
+        repository_result = self.repository.find_all()
+        properties_dict = repository_result.get('properties', [])
+        sql_query = repository_result.get('sql')
         
         # Si no hay propiedades, intentar cargar desde JSON
         if not properties_dict or len(properties_dict) == 0:
@@ -136,11 +138,18 @@ class PropertyService(IPropertyService):
                         json_data = json.load(f)
                         print(f"PropertyService: Cargando {len(json_data)} propiedades desde JSON como fallback")
                         properties_dict = json_data
+                        sql_query = "Datos cargados desde archivo JSON (fallback)"
             except Exception as e:
                 print(f"Error al cargar JSON fallback en PropertyService: {e}")
                 properties_dict = []
+                sql_query = "Error al cargar datos"
         
-        return [self.mapper.to_product(prop) for prop in properties_dict]
+        products = [self.mapper.to_product(prop) for prop in properties_dict]
+        
+        return {
+            'products': products,
+            'sql': sql_query
+        }
     
     def get_property_by_id(self, property_id: int) -> Optional[Product]:
         """

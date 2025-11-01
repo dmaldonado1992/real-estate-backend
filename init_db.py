@@ -32,8 +32,8 @@ def init_database():
     # Configuración de la base de datos
     db_config = {
         'host': os.getenv('DB_HOST', 'mysql'),
-        'user': os.getenv('DB_USER', 'appuser'),
-        'password': os.getenv('DB_PASSWORD', 'apppass'),
+        'user': os.getenv('DB_USER', 'root'),
+        'password': os.getenv('DB_PASSWORD', 'rootpassword'),
         'database': os.getenv('DB_NAME', 'propiedades_db')
     }
 
@@ -49,25 +49,44 @@ def init_database():
         connection = mysql.connector.connect(**db_config)
         cursor = connection.cursor()
 
+        # Verificar si la tabla ya existe y tiene datos
+        cursor.execute("SHOW TABLES LIKE 'propiedades'")
+        table_exists = cursor.fetchone()
+        
+        if table_exists:
+            cursor.execute("SELECT COUNT(*) FROM propiedades")
+            count = cursor.fetchone()[0]
+            if count > 0:
+                print(f"✅ Base de datos ya inicializada con {count} propiedades")
+                return True
+
         # Leer y ejecutar el schema
         print("📄 Creando tablas...")
-        with open('/app/persistencia/01_schema.sql', 'r', encoding='utf-8') as f:
-            schema_sql = f.read()
-            # Ejecutar múltiples statements
-            for statement in schema_sql.split(';'):
-                statement = statement.strip()
-                if statement:
-                    cursor.execute(statement)
+        schema_path = '/app/persistencia/01_schema.sql'
+        if os.path.exists(schema_path):
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema_sql = f.read()
+                # Ejecutar múltiples statements
+                for statement in schema_sql.split(';'):
+                    statement = statement.strip()
+                    if statement:
+                        cursor.execute(statement)
+        else:
+            print(f"⚠️  Archivo de schema no encontrado: {schema_path}")
 
         # Leer y ejecutar los datos de semilla
         print("🌱 Insertando datos de ejemplo...")
-        with open('/app/persistencia/02_seed_data.sql', 'r', encoding='utf-8') as f:
-            seed_sql = f.read()
-            # Ejecutar múltiples statements
-            for statement in seed_sql.split(';'):
-                statement = statement.strip()
-                if statement:
-                    cursor.execute(statement)
+        seed_path = '/app/persistencia/02_seed_data.sql'
+        if os.path.exists(seed_path):
+            with open(seed_path, 'r', encoding='utf-8') as f:
+                seed_sql = f.read()
+                # Ejecutar múltiples statements
+                for statement in seed_sql.split(';'):
+                    statement = statement.strip()
+                    if statement:
+                        cursor.execute(statement)
+        else:
+            print(f"⚠️  Archivo de datos no encontrado: {seed_path}")
 
         # Confirmar cambios
         connection.commit()

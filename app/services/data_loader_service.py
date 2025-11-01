@@ -25,13 +25,13 @@ class DataLoader:
         """
         try:
             # Intentar cargar desde base de datos
-            db_properties = self._load_from_database()
-            if db_properties:
+            db_result = self._load_from_database_with_query()
+            if db_result and db_result.get('properties'):
                 return {
-                    'properties': db_properties,
+                    'properties': db_result['properties'],
                     'data_source': 'database',
                     'user_query': None,
-                    'generated_sql': None
+                    'generated_sql': db_result.get('sql')
                 }
         except Exception as e:
             logger.warning(f"Error cargando desde DB: {e}")
@@ -147,6 +147,42 @@ class DataLoader:
         result = self.load_properties_from_db_or_json_with_query()
         return result.get('properties', [])
 
+    def _load_from_database_with_query(self) -> Optional[Dict]:
+        """Carga propiedades desde MySQL y retorna junto con la query utilizada"""
+        try:
+            connection = self._get_db_connection()
+            if not connection:
+                return None
+            
+            cursor = connection.cursor(dictionary=True)
+            sql_query = "SELECT * FROM propiedades ORDER BY fecha_publicacion DESC"
+            cursor.execute(sql_query)
+            properties = cursor.fetchall()
+            
+            # Convertir Decimal a float para JSON serialization
+            processed_properties = []
+            for prop in properties:
+                processed_prop = {}
+                for key, value in prop.items():
+                    if hasattr(value, 'decimal'):  # Decimal type
+                        processed_prop[key] = float(value)
+                    else:
+                        processed_prop[key] = value
+                processed_properties.append(processed_prop)
+            
+            cursor.close()
+            connection.close()
+            
+            logger.info(f"Cargadas {len(processed_properties)} propiedades desde DB")
+            return {
+                'properties': processed_properties,
+                'sql': sql_query
+            }
+            
+        except mysql.connector.Error as e:
+            logger.error(f"Error conectando a base de datos: {e}")
+            return None
+
     def _load_from_database(self) -> Optional[List[Dict]]:
         """Carga propiedades desde MySQL"""
         try:
@@ -206,7 +242,7 @@ class DataLoader:
         """Obtiene conexión a base de datos MySQL"""
         try:
             connection = mysql.connector.connect(
-                host=os.getenv('DB_HOST', 'localhost'),
+                host=os.getenv('DB_HOST', 'mysql'),
                 port=int(os.getenv('DB_PORT', 3306)),
                 database=os.getenv('DB_NAME', 'propiedades_db'),
                 user=os.getenv('DB_USER', 'root'),

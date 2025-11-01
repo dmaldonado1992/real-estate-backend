@@ -26,8 +26,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# Copy persistence files
+COPY persistencia/ /app/persistencia/
+
 # Make init scripts executable
-RUN chmod +x init_db.py wait_for_db.py
+RUN chmod +x init_db.py
 
 # Initialize database and run the application
-CMD python wait_for_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+CMD python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

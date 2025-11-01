@@ -19,8 +19,8 @@ class IPropertyRepository(ABC):
     """
     
     @abstractmethod
-    def find_all(self) -> List[Dict[str, Any]]:
-        """Obtener todas las propiedades"""
+    def find_all(self) -> Dict[str, Any]:
+        """Obtener todas las propiedades con la query SQL utilizada"""
         pass
     
     @abstractmethod
@@ -94,23 +94,31 @@ class PropertyRepository(IPropertyRepository):
         """
         self.db = db_connection
     
-    def find_all(self) -> List[Dict[str, Any]]:
-        """Obtener todas las propiedades ordenadas por fecha"""
+    def find_all(self) -> Dict[str, Any]:
+        """Obtener todas las propiedades ordenadas por fecha con la query SQL utilizada"""
         try:
             cursor = self.db.connection.cursor(dictionary=True)
-            cursor.execute("""
+            sql_query = """
                 SELECT id, titulo, descripcion, tipo, precio, 
                        habitaciones, banos, area_m2,
                        ubicacion, fecha_publicacion, imagen_url
                 FROM propiedades
                 ORDER BY fecha_publicacion DESC
-            """)
+            """
+            cursor.execute(sql_query)
             results = cursor.fetchall()
             cursor.close()
-            return results
+            
+            return {
+                'properties': results,
+                'sql': sql_query.strip()
+            }
         except mysql.connector.Error as e:
             print(f"Error obteniendo propiedades: {e}")
-            return []
+            return {
+                'properties': [],
+                'sql': None
+            }
     
     def find_by_id(self, property_id: int) -> Optional[Dict[str, Any]]:
         """Obtener una propiedad específica por ID"""

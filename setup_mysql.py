@@ -32,7 +32,7 @@ def init_mysql_database():
     """Inicializar base de datos MySQL"""
     # Configuración de la base de datos
     db_config = {
-        'host': os.getenv('DB_HOST', 'localhost'),
+        'host': os.getenv('DB_HOST', 'mysql'),
         'port': int(os.getenv('DB_PORT', '3306')),
         'user': os.getenv('DB_USER', 'root'),
         'password': os.getenv('DB_PASSWORD', ''),

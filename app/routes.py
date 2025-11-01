@@ -7,9 +7,13 @@ from .services.llm_coordination_service import LLMService
 
 router = APIRouter()
 
-@router.get("/api/products", response_model=List[Product], tags=["Productos"])
-async def get_products(service: IPropertyService = Depends(get_property_service)) -> List[Product]:
-    return service.get_all_properties()
+@router.get("/api/products", tags=["Productos"])
+async def get_products(service: IPropertyService = Depends(get_property_service)):
+    result = service.get_all_properties()
+    return {
+        "products": result.get('products', []),
+        "sql": result.get('sql')
+    }
 
 @router.get("/api/products/{product_id}", response_model=Product, tags=["Productos"])
 async def get_product(product_id: int, service: IPropertyService = Depends(get_property_service)) -> Product:
@@ -100,15 +104,21 @@ async def generate_sql_endpoint(request: SearchIARequest):
     """
     try:
         llm_service = LLMService()
-        sql_query = await llm_service.generate_sql(request.query)
+        sql_result = await llm_service.generate_sql_async(request.query)
         
-        return {
-            "success": True,
-            "sql": sql_query,
-            "original_query": request.query,
-            "model": "deepseek-v3.1:671b-cloud",
-            "note": "SQL generado por IA - revisar antes de ejecutar en producción"
-        }
+        if sql_result.get('success'):
+            return {
+                "success": True,
+                "sql": sql_result.get('sql'),
+                "original_query": request.query,
+                "model": "deepseek-v3.1:671b-cloud",
+                "note": "SQL generado por IA - revisar antes de ejecutar en producción"
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al generar SQL: {sql_result.get('error', 'Error desconocido')}"
+            )
     except Exception as e:
         raise HTTPException(
             status_code=500,
