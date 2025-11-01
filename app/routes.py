@@ -40,33 +40,81 @@ async def delete_product(product_id: int, service: IPropertyService = Depends(ge
     return None
 
 
-@router.post("/api/search-ia", response_model=SearchIAResponse, tags=["IA"])
-async def search_con_ia(request: SearchIARequest) -> SearchIAResponse:
+@router.post("/api/search-ia", tags=["IA"])
+async def search_con_ia(request: SearchIARequest):
     """
-    Endpoint para realizar búsquedas inteligentes usando IA en la nube.
+    Endpoint para consultas directas a la IA - Devuelve respuesta completa sin procesar.
     
-    Utiliza el modelo deepseek-v3.1:671b-cloud para proporcionar respuestas
-    inteligentes sobre propiedades, productos y consultas de bienes raíces.
+    Utiliza Ollama Cloud con modelo Perplexity para responder cualquier consulta
+    sobre bienes raíces de forma conversacional y natural.
     
     Args:
         request: SearchIARequest con query, context opcional y use_cloud
     
     Returns:
-        SearchIAResponse con la respuesta de la IA y metadata
+        Respuesta directa y completa de la IA sin procesamiento adicional
     """
     try:
         llm_service = LLMService()
-        result = await llm_service.search_con_ia(
-            query=request.query,
-            context=request.context,
-            use_cloud=request.use_cloud
-        )
-        return SearchIAResponse(**result)
+        
+        # Usar el método search_ia del servicio
+        response = await llm_service.search_ia(request.query)
+        
+        # Devolver respuesta completa de la IA
+        return {
+            "success": True,
+            "response": response if response else "No pude procesar tu consulta en este momento.",
+            "query": request.query,
+            "ai_used": True,
+            "model": "deepseek-v3.1:671b-cloud"
+        }
+        
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Error en búsqueda con IA: {str(e)}"
         )
+
+
+@router.post("/api/ask-ai", tags=["IA"])
+async def ask_ai_endpoint(request: SearchIARequest):
+    """Endpoint simple - devuelve exactamente lo que responde la IA"""
+    llm_service = LLMService()
+    response = await llm_service.ask_ai_direct(request.query)
+    return {"response": response}
+
+
+@router.post("/api/generate-sql", tags=["IA"])
+async def generate_sql_endpoint(request: SearchIARequest):
+    """
+    Genera consultas SQL basadas en lenguaje natural usando IA.
+    
+    Convierte consultas en lenguaje natural a SQL válido para la tabla 'propiedades'.
+    Utiliza DeepSeek v3.1 para generar SQL optimizado y seguro.
+    
+    Args:
+        request: SearchIARequest con query en lenguaje natural
+    
+    Returns:
+        Dict con el SQL generado, query original y metadatos
+    """
+    try:
+        llm_service = LLMService()
+        sql_query = await llm_service.generate_sql(request.query)
+        
+        return {
+            "success": True,
+            "sql": sql_query,
+            "original_query": request.query,
+            "model": "deepseek-v3.1:671b-cloud",
+            "note": "SQL generado por IA - revisar antes de ejecutar en producción"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al generar SQL: {str(e)}"
+        )
+
 
 
 @router.post("/api/search-ia-real-state", response_model=SearchRealStateResponse, tags=["IA"])

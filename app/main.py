@@ -2,6 +2,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from dotenv import load_dotenv
+import os
+from pathlib import Path
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Cargar variables de entorno desde backend/.env con override=True para sobrescribir las del sistema
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path, override=True)
+
+logger.info(f"Cargando .env desde: {env_path}")
+logger.info(f"OLLAMA_API_KEY configurada: {bool(os.getenv('OLLAMA_API_KEY'))}")
+logger.info(f"USE_OLLAMA_CLOUD: {os.getenv('USE_OLLAMA_CLOUD')}")
 
 # Crear la aplicación FastAPI con metadatos para Swagger
 app = FastAPI(
