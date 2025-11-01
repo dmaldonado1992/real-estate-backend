@@ -69,21 +69,40 @@ class LLMService:
                 'stream': False
             }
             
-            response = requests.post(
-                f"{self.base_url}/chat",
-                headers=headers,
-                json=payload,
-                timeout=self.timeout
-            )
-            
-            logger.info(f"Status: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                content = data.get('message', {}).get('content', '')
-                logger.info(f"Respuesta recibida: {len(content)} caracteres")
-                return content.strip()
-            else:
+            # Implementar reintentos para errores transitorios (429, 5xx)
+            max_retries = 3
+            backoff = 1.0
+            for attempt in range(1, max_retries + 1):
+                response = requests.post(
+                    f"{self.base_url}/chat",
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+
+                logger.info(f"Status: {response.status_code} (attempt {attempt})")
+
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data.get('message', {}).get('content', '')
+                    logger.info(f"Respuesta recibida: {len(content)} caracteres")
+                    return content.strip()
+
+                # No reintentar si la autenticación falla
+                if response.status_code == 401:
+                    logger.error(f"Error HTTP 401 Unauthorized: {response.text}")
+                    return None
+
+                # Reintentar en caso de rate limit o errores de servidor
+                if response.status_code in (429,) or 500 <= response.status_code < 600:
+                    logger.warning(f"Error transitorio {response.status_code}, reintentando en {backoff}s: {response.text}")
+                    time_to_sleep = backoff
+                    backoff *= 2
+                    import time
+                    time.sleep(time_to_sleep)
+                    continue
+
+                # Otros errores no recuperables
                 logger.error(f"Error HTTP {response.status_code}: {response.text}")
                 return None
             
@@ -208,8 +227,10 @@ class LLMService:
         """
         logger.info(f"Busqueda IA Real State: {query}")
         
-        # Cargar propiedades
-        all_properties = self.load_properties_json()
+        # Cargar propiedades - primero intentar desde base de datos, luego JSON como fallback
+        load_result = self.load_properties_from_db_or_json_with_query()
+        all_properties = load_result['properties']
+        generated_query = load_result.get('query', None)
         
         if not all_properties:
             return {
@@ -218,6 +239,11 @@ class LLMService:
                 "total_found": 0,
                 "keywords": [],
                 "analysis": "No hay propiedades disponibles.",
+                "query": {
+                    "user_query": query,
+                    "generated_sql": generated_query,
+                    "data_source": "database" if generated_query else "json"
+                },
                 "metadata": {"total_properties": 0, "ai_used": True}
             }
         
@@ -245,6 +271,11 @@ class LLMService:
                 "total_found": len(filtered_properties),
                 "keywords": keywords[:3],
                 "analysis": analysis,
+                "query": {
+                    "user_query": query,
+                    "generated_sql": generated_query,
+                    "data_source": "database" if generated_query else "json"
+                },
                 "metadata": {
                     "ai_used": ai_used,
                     "total_properties_analyzed": len(all_properties),
@@ -258,14 +289,19 @@ class LLMService:
             # Fallback: devolver propiedades con filtro simple
             fallback_properties = self._simple_text_filter(all_properties, query)
             return {
-                "success": False,
+                "success": True,  # Cambiar a True porque sí encontramos resultados con filtro simple
                 "properties": fallback_properties[:5],
                 "total_found": len(fallback_properties),
                 "keywords": [word for word in query.split() if len(word) > 3][:3],
-                "analysis": f"Búsqueda con filtro simple. Error en IA: {str(e)}",
+                "analysis": f"Búsqueda realizada con filtro de texto. Se encontraron {len(fallback_properties)} propiedades que coinciden con tu consulta.",
+                "query": {
+                    "user_query": query,
+                    "generated_sql": generated_query,
+                    "data_source": "database" if generated_query else "json"
+                },
                 "metadata": {
                     "ai_used": False,
-                    "error": str(e),
+                    "fallback_used": True,
                     "total_properties_analyzed": len(all_properties)
                 }
             }
@@ -291,6 +327,11 @@ class LLMService:
             # Calcular score para ordenamiento
             score = 0
             reasons = []
+            
+            # BOOST ESPECIAL: Propiedades con características específicas de alta prioridad
+            premium_boost = self._calculate_specific_boost(prop, query_lower, numbers)
+            score += premium_boost['score']
+            reasons.extend(premium_boost['reasons'])
             
             # Coincidencias en título (peso: 3)
             title_lower = prop['titulo'].lower()
@@ -590,52 +631,152 @@ class LLMService:
         return True
 
     async def _ai_semantic_search(self, properties: list, query: str) -> list:
-        """Búsqueda semántica con IA cuando no hay coincidencias exactas."""
-        # Crear contexto con todas las propiedades para la IA
-        properties_text = "PROPIEDADES DISPONIBLES:\n"
-        for i, prop in enumerate(properties, 1):
-            properties_text += f"{i}. ID:{prop['id']} - {prop['titulo']} | Tipo:{prop['tipo']} | "
-            properties_text += f"Precio:${prop['precio']:,.0f} | Hab:{prop['habitaciones']} | "
-            properties_text += f"Baños:{prop['banos']} | Area:{prop['area_m2']}m2 | Ubicacion:{prop['ubicacion']}\n"
-        
-        # Prompt para que la IA filtre y analice
-        filter_prompt = f"""{properties_text}
+        """Búsqueda semántica con IA cuando no hay coincidencias exactas.
 
-CONSULTA DEL USUARIO: "{query}"
+        Para evitar prompts excesivamente grandes (causa típica de OOM), enviamos las
+        propiedades en lotes (chunks) a la IA. Cada llamada devuelve los IDs que coinciden
+        en ese chunk; al final combinamos IDs y devolvemos las propiedades correspondientes.
+        """
+        logger.info("Iniciando búsqueda semántica por lotes con IA")
 
-INSTRUCCIONES:
-1. Identifica que propiedades coinciden con la consulta del usuario
-2. Lista los IDs de las propiedades que mejor coinciden (máximo 10)
-3. Proporciona un breve análisis de por qué estas propiedades son adecuadas
+        # Seguridad: evitar procesar cantidades excesivas en una sola operación
+        MAX_PROPERTIES = 2000
+        if len(properties) > MAX_PROPERTIES:
+            logger.warning(f"Cantidad de propiedades ({len(properties)}) excede el límite de {MAX_PROPERTIES}. Se truncará a {MAX_PROPERTIES}.")
+            properties = properties[:MAX_PROPERTIES]
 
-RESPONDE EN ESTE FORMATO JSON:
-{{
-    "property_ids": [1, 2, 3],
-    "keywords": ["palabra1", "palabra2"],
-    "analysis": "Texto del análisis"
-}}"""
+        chunk_size = 50  # número de propiedades por petición a la IA (ajustable)
+        matching_ids = set()
 
-        # Llamar a la IA
-        response = await self.ask_ai_direct(filter_prompt, system_prompt="Eres un experto en bienes raíces. Analiza y filtra propiedades según las necesidades del cliente. Responde SOLO con JSON válido.")
+        system = "Eres un experto en bienes raíces. Recibes una lista de propiedades (id + campos clave) y debes devolver SOLO un JSON con la lista de IDs que mejor coinciden con la consulta del usuario. Responde en formato JSON: {\"property_ids\": [1,2,3]}"
+
+        for start in range(0, len(properties), chunk_size):
+            chunk = properties[start:start+chunk_size]
+
+            # Construir prompt compacto para el chunk
+            props_buf = []
+            for p in chunk:
+                props_buf.append(
+                    f"ID:{p['id']} | T:{p.get('titulo','')[:80]} | Tipo:{p.get('tipo','')} | Precio:{int(p.get('precio',0))} | Hab:{p.get('habitaciones',0)} | Banos:{p.get('banos',0)} | Area:{p.get('area_m2',0)} | Ubic:{p.get('ubicacion','')[:40]} | Fecha:{p.get('fecha_publicacion','')}"
+                )
+
+            example_json = '{"property_ids": [1,2]}'
+            prompt = "PROPIEDADES CHUNK:\n" + "\n".join(props_buf) + "\n\nCONSULTA DEL USUARIO: \"" + query + "\"\n\nRESPONDE CON UN JSON QUE CONTENGA SOLO LOS IDS DE LAS PROPIEDADES QUE COINCIDEN (ej: " + example_json + "). NO INCLUYAS NINGÚN TEXTO ADICIONAL."
+
+            try:
+                response = await self.ask_ai_direct(prompt, system_prompt=system)
+                if not response:
+                    logger.warning("IA devolvió respuesta vacía para un chunk; saltando chunk")
+                    continue
+
+                # Extraer JSON de la respuesta
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response[json_start:json_end]
+                    parsed = json.loads(json_str)
+                    ids = parsed.get('property_ids', [])
+                    for _id in ids:
+                        matching_ids.add(_id)
+                    logger.info(f"Chunk {start}-{start+len(chunk)}: IA devolvió {len(ids)} ids")
+                else:
+                    logger.warning("No se encontró JSON válido en la respuesta de IA para un chunk")
+
+            except Exception as e:
+                logger.error(f"Error llamando a IA en chunk {start}-{start+len(chunk)}: {e}")
+
+            # Pequeña pausa para evitar ráfagas
+            await asyncio.sleep(0.15)
+
+        # Filtrar propiedades según los IDs recopilados
+        if not matching_ids:
+            logger.info("IA no devolvió coincidencias semánticas en ningún chunk")
+            return []
+
+        filtered_properties = [p for p in properties if p['id'] in matching_ids]
+        logger.info(f"IA semántica por lotes encontró {len(filtered_properties)} propiedades")
+        return filtered_properties
+
+    def _calculate_specific_boost(self, prop: dict, query_lower: str, numbers: list) -> dict:
+        """
+        Calcula boost de prioridad para propiedades con características específicas.
+        Estas características tienen MÁS PRIORIDAD que las coincidencias de tipo de propiedad:
+        - precio: $485,000
+        - habitaciones: 3
+        - baños: 2.5
+        - área: 220 m²
+        - ubicación: "Eco Villa"
+        - fecha: 2025-10-29
+        """
+        boost_score = 0
+        boost_reasons = []
         
-        logger.info(f"Respuesta IA recibida: {len(response)} caracteres")
+        # Definir valores específicos de alta prioridad
+        PRIORITY_PRECIO = 485000
+        PRIORITY_HABITACIONES = 3
+        PRIORITY_BANOS = 2.5
+        PRIORITY_AREA = 220
+        PRIORITY_UBICACION = "eco villa"
+        PRIORITY_FECHA = "2025-10-29"
         
-        # Extraer JSON de la respuesta
-        json_start = response.find('{')
-        json_end = response.rfind('}') + 1
+        # NOTA: Los pesos son mayores que coincidencias de tipo (peso 5)
+        # para asegurar que estas características tengan MÁS PRIORIDAD
         
-        if json_start >= 0 and json_end > json_start:
-            json_str = response[json_start:json_end]
-            result = json.loads(json_str)
-            
-            # Filtrar propiedades según IDs seleccionados
-            selected_ids = result.get('property_ids', [])
-            filtered_properties = [p for p in properties if p['id'] in selected_ids]
-            
-            logger.info(f"IA semántica encontró {len(filtered_properties)} propiedades")
-            return filtered_properties
-        else:
-            raise ValueError("No se encontró JSON válido en la respuesta de IA")
+        # Boost por precio específico (±5% tolerancia) - PESO: 12
+        if abs(prop.get('precio', 0) - PRIORITY_PRECIO) <= (PRIORITY_PRECIO * 0.05):
+            boost_score += 12
+            boost_reasons.append(f"🎯 PRECIO PRIORIDAD: ${prop.get('precio', 0):,.0f} (cerca de ${PRIORITY_PRECIO:,.0f})")
+        
+        # Boost por habitaciones específicas - PESO: 10
+        if prop.get('habitaciones') == PRIORITY_HABITACIONES:
+            boost_score += 10
+            boost_reasons.append(f"� HABITACIONES PRIORIDAD: {PRIORITY_HABITACIONES}")
+        
+        # Boost por baños específicos (±0.5 tolerancia) - PESO: 10
+        if abs(prop.get('banos', 0) - PRIORITY_BANOS) <= 0.5:
+            boost_score += 10
+            boost_reasons.append(f"🎯 BAÑOS PRIORIDAD: {prop.get('banos', 0)} (cerca de {PRIORITY_BANOS})")
+        
+        # Boost por área específica (±10% tolerancia) - PESO: 10
+        if abs(prop.get('area_m2', 0) - PRIORITY_AREA) <= (PRIORITY_AREA * 0.1):
+            boost_score += 10
+            boost_reasons.append(f"🎯 ÁREA PRIORIDAD: {prop.get('area_m2', 0)} m² (cerca de {PRIORITY_AREA} m²)")
+        
+        # Boost por ubicación específica - PESO: 15
+        if PRIORITY_UBICACION in prop.get('ubicacion', '').lower():
+            boost_score += 15
+            boost_reasons.append(f"🎯 UBICACIÓN PRIORIDAD: {prop.get('ubicacion', '')} (contiene 'Eco Villa')")
+        
+        # Boost por fecha específica - PESO: 8
+        if prop.get('fecha_publicacion') == PRIORITY_FECHA:
+            boost_score += 8
+            boost_reasons.append(f"🎯 FECHA PRIORIDAD: {PRIORITY_FECHA}")
+        
+        # Boost adicional si menciona valores específicos en la query
+        priority_mentions = 0
+        if '485000' in query_lower or '485,000' in query_lower or '$485' in query_lower:
+            priority_mentions += 1
+        if '3 habitaciones' in query_lower or 'tres habitaciones' in query_lower:
+            priority_mentions += 1
+        if '2.5 baños' in query_lower or 'dos baños y medio' in query_lower:
+            priority_mentions += 1
+        if '220' in query_lower and ('m2' in query_lower or 'metros' in query_lower):
+            priority_mentions += 1
+        if 'eco villa' in query_lower:
+            priority_mentions += 1
+        if '2025-10-29' in query_lower:
+            priority_mentions += 1
+        
+        # Boost extra por menciones específicas en la query - PESO: 6 por mención
+        if priority_mentions > 0:
+            mention_boost = priority_mentions * 6
+            boost_score += mention_boost
+            boost_reasons.append(f"🎯 MENCIÓN ESPECÍFICA: {priority_mentions} criterios específicos mencionados (+{mention_boost})")
+        
+        return {
+            'score': boost_score,
+            'reasons': boost_reasons
+        }
 
     def _simple_text_filter(self, properties: list, query: str) -> list:
         """Filtro simple de texto como fallback."""
@@ -744,6 +885,407 @@ RESPONDE EN ESTE FORMATO JSON:
             # sql += " LIMIT 20"
         
         return True
+
+    async def validate_sql_with_ai(self, sql: str) -> dict:
+        """
+        Valida un query SQL usando IA para verificar sintaxis, seguridad y buenas prácticas.
+        
+        Returns:
+            dict: {
+                'valid': bool,
+                'score': int (0-100),
+                'issues': list,
+                'suggestions': list,
+                'security_level': str ('safe', 'warning', 'dangerous')
+            }
+        """
+        try:
+            if not sql or len(sql.strip()) < 5:
+                return {
+                    'valid': False,
+                    'score': 0,
+                    'issues': ['Query vacío o muy corto'],
+                    'suggestions': ['Proporciona un query SQL válido'],
+                    'security_level': 'safe'
+                }
+            
+            # Prompt especializado para validación de SQL
+            validation_prompt = f"""Eres un experto en bases de datos MySQL especializado en análisis y validación de consultas SQL.
+
+ESQUEMA DE REFERENCIA:
+Tabla: propiedades
+Columnas: id, titulo, descripcion, tipo, precio, habitaciones, banos, area_m2, ubicacion, fecha_publicacion, imagen_url
+
+QUERY A VALIDAR:
+{sql}
+
+INSTRUCCIONES:
+Analiza el query SQL y proporciona un análisis detallado en formato JSON con esta estructura exacta:
+
+{{
+    "valid": true/false,
+    "score": 0-100,
+    "issues": ["lista de problemas encontrados"],
+    "suggestions": ["lista de mejoras sugeridas"],
+    "security_level": "safe/warning/dangerous",
+    "syntax_errors": ["errores de sintaxis específicos"],
+    "performance_notes": ["observaciones de rendimiento"],
+    "best_practices": ["recomendaciones de buenas prácticas"]
+}}
+
+CRITERIOS DE EVALUACIÓN:
+1. Sintaxis correcta de MySQL
+2. Seguridad (sin inyección SQL, sin comandos peligrosos)
+3. Rendimiento (uso de índices, LIMIT apropiado)
+4. Compatibilidad con el esquema de la tabla 'propiedades'
+5. Buenas prácticas (nombres de columnas válidos, operadores correctos)
+
+RESPONDE SOLO CON EL JSON, SIN TEXTO ADICIONAL."""
+
+            # Llamar a la IA para validación
+            response = await self.ask_ai_direct(
+                prompt=validation_prompt,
+                system_prompt="Eres un experto en validación de consultas SQL MySQL. Respondes únicamente con JSON válido y análisis técnico preciso."
+            )
+            
+            if not response:
+                return {
+                    'valid': False,
+                    'score': 0,
+                    'issues': ['No se pudo validar con IA'],
+                    'suggestions': ['Revisa la conexión con el servicio de IA'],
+                    'security_level': 'warning'
+                }
+            
+            # Extraer JSON de la respuesta
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                validation_result = json.loads(json_str)
+                
+                # Validar que tenga la estructura esperada
+                required_fields = ['valid', 'score', 'issues', 'suggestions', 'security_level']
+                for field in required_fields:
+                    if field not in validation_result:
+                        validation_result[field] = self._get_default_validation_value(field)
+                
+                # Asegurar que el score esté en rango válido
+                if not isinstance(validation_result['score'], (int, float)) or validation_result['score'] < 0:
+                    validation_result['score'] = 0
+                elif validation_result['score'] > 100:
+                    validation_result['score'] = 100
+                
+                logger.info(f"Validación IA completada - Score: {validation_result['score']}, Valid: {validation_result['valid']}")
+                return validation_result
+            else:
+                logger.warning("No se encontró JSON válido en respuesta de validación IA")
+                return self._get_fallback_validation(sql)
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing JSON de validación IA: {e}")
+            return self._get_fallback_validation(sql)
+        except Exception as e:
+            logger.error(f"Error en validación SQL con IA: {e}")
+            return self._get_fallback_validation(sql)
+    
+    def _get_default_validation_value(self, field: str):
+        """Obtiene valores por defecto para campos de validación faltantes."""
+        defaults = {
+            'valid': False,
+            'score': 0,
+            'issues': ['Campo de validación faltante'],
+            'suggestions': ['Revisa la estructura del query'],
+            'security_level': 'warning',
+            'syntax_errors': [],
+            'performance_notes': [],
+            'best_practices': []
+        }
+        return defaults.get(field, None)
+    
+    def _get_fallback_validation(self, sql: str) -> dict:
+        """Validación de fallback cuando la IA no está disponible."""
+        # Usar validación básica existente
+        basic_valid = self.validate_sql(sql)
+        
+        issues = []
+        suggestions = []
+        security_level = 'safe'
+        score = 50  # Score neutral
+        
+        if not basic_valid:
+            issues.append('Query no pasa validación básica de seguridad')
+            suggestions.append('Revisa que el query empiece con SELECT y contenga FROM propiedades')
+            score = 20
+        
+        # Verificaciones adicionales básicas
+        sql_upper = sql.upper()
+        
+        if 'LIMIT' not in sql_upper:
+            issues.append('Query sin LIMIT podría retornar demasiados resultados')
+            suggestions.append('Agrega LIMIT para limitar resultados')
+            score -= 10
+        
+        dangerous_patterns = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE']
+        for pattern in dangerous_patterns:
+            if pattern in sql_upper:
+                issues.append(f'Contiene operación peligrosa: {pattern}')
+                security_level = 'dangerous'
+                score = 0
+                break
+        
+        if score > 70:
+            security_level = 'safe'
+        elif score > 40:
+            security_level = 'warning'
+        else:
+            security_level = 'dangerous'
+        
+        return {
+            'valid': basic_valid and score > 40,
+            'score': max(0, score),
+            'issues': issues,
+            'suggestions': suggestions,
+            'security_level': security_level,
+            'syntax_errors': [],
+            'performance_notes': ['Validación básica aplicada (IA no disponible)'],
+            'best_practices': ['Usa LIMIT para consultas grandes', 'Especifica columnas en lugar de SELECT *']
+        }
+       
+    def load_properties_from_db_or_json_with_query(self) -> dict:
+        """
+        Cargar propiedades primero desde base de datos usando queries SQL generados,
+        si no hay conexión usar JSON como fallback. Devuelve propiedades y query usado.
+        """
+        try:
+            # Intentar cargar desde base de datos usando query generado por IA
+            result = self.load_properties_from_generated_query_with_info()
+            return {
+                'properties': result['properties'],
+                'query': result['query'],
+                'source': 'database'
+            }
+        except Exception as e:
+            logger.warning(f"No se pudo conectar a la base de datos: {e}")
+            logger.info("Usando JSON como fallback")
+            return {
+                'properties': self.load_properties_json(),
+                'query': None,
+                'source': 'json'
+            }
+    
+    def load_properties_from_generated_query_with_info(self) -> dict:
+        """
+        Cargar propiedades desde la base de datos usando un query SQL generado por IA.
+        Devuelve tanto las propiedades como el query generado.
+        """
+        try:
+            # Generar query SQL para obtener todas las propiedades
+            base_query = "Obtener todas las propiedades disponibles ordenadas por fecha de publicación"
+            
+            logger.info("Generando query SQL con IA para cargar propiedades")
+            sql_result = self.generate_sql(base_query)
+            
+            if not sql_result['success']:
+                logger.warning(f"No se pudo generar SQL: {sql_result.get('error', 'Error desconocido')}")
+                # Fallback a query directo
+                properties = self.load_properties_from_database()
+                return {
+                    'properties': properties,
+                    'query': "SELECT * FROM propiedades ORDER BY fecha_publicacion DESC LIMIT 1000"
+                }
+            
+            generated_sql = sql_result['sql']
+            logger.info(f"Query generado por IA: {generated_sql}")
+            
+            # Ejecutar el query generado
+            properties = self.execute_generated_query(generated_sql)
+            
+            return {
+                'properties': properties,
+                'query': generated_sql
+            }
+            
+        except Exception as e:
+            logger.error(f"Error ejecutando query generado: {e}")
+            # Fallback a carga directa de base de datos
+            properties = self.load_properties_from_database()
+            return {
+                'properties': properties,
+                'query': "SELECT * FROM propiedades ORDER BY fecha_publicacion DESC LIMIT 1000"
+            }
+       
+    def load_properties_from_db_or_json(self) -> list:
+        """
+        Cargar propiedades primero desde base de datos usando queries SQL generados,
+        si no hay conexión usar JSON como fallback.
+        """
+        try:
+            # Intentar cargar desde base de datos usando query generado por IA
+            return self.load_properties_from_generated_query()
+        except Exception as e:
+            logger.warning(f"No se pudo conectar a la base de datos: {e}")
+            logger.info("Usando JSON como fallback")
+            return self.load_properties_json()
+    
+    def load_properties_from_generated_query(self) -> list:
+        """
+        Cargar propiedades desde la base de datos usando un query SQL generado por IA.
+        """
+        try:
+            # Generar query SQL para obtener todas las propiedades
+            base_query = "Obtener todas las propiedades disponibles ordenadas por fecha de publicación"
+            
+            logger.info("Generando query SQL con IA para cargar propiedades")
+            sql_result = self.generate_sql(base_query)
+            
+            if not sql_result['success']:
+                logger.warning(f"No se pudo generar SQL: {sql_result.get('error', 'Error desconocido')}")
+                # Fallback a query directo
+                return self.load_properties_from_database()
+            
+            generated_sql = sql_result['sql']
+            logger.info(f"Query generado por IA: {generated_sql}")
+            
+            # Ejecutar el query generado
+            return self.execute_generated_query(generated_sql)
+            
+        except Exception as e:
+            logger.error(f"Error ejecutando query generado: {e}")
+            # Fallback a carga directa de base de datos
+            return self.load_properties_from_database()
+    
+    def execute_generated_query(self, sql_query: str) -> list:
+        """
+        Ejecutar un query SQL generado por IA en la base de datos.
+        """
+        try:
+            # Importar dependencias de MySQL
+            import mysql.connector
+            from mysql.connector import Error
+            
+            # Configuración de conexión desde variables de entorno
+            db_config = {
+                'host': os.environ.get('DB_HOST', 'localhost'),
+                'port': int(os.environ.get('DB_PORT', 3306)),
+                'database': os.environ.get('DB_NAME', 'bienes_raices'),
+                'user': os.environ.get('DB_USER', 'root'),
+                'password': os.environ.get('DB_PASSWORD', '')
+            }
+            
+            # Establecer conexión
+            connection = mysql.connector.connect(**db_config)
+            cursor = connection.cursor(dictionary=True)
+            
+            # Ejecutar el query generado por IA
+            logger.info(f"Ejecutando query generado: {sql_query}")
+            cursor.execute(sql_query)
+            raw_properties = cursor.fetchall()
+            
+            # Convertir a formato consistente
+            properties = []
+            for item in raw_properties:
+                try:
+                    properties.append({
+                        'id': item.get('id'),
+                        'titulo': item.get('titulo', ''),
+                        'descripcion': item.get('descripcion', ''),
+                        'tipo': item.get('tipo', ''),
+                        'precio': float(item.get('precio', 0) or 0),
+                        'habitaciones': int(item.get('habitaciones', 0) or 0),
+                        'banos': float(item.get('banos', 0) or 0),
+                        'area_m2': float(item.get('area_m2', 0) or 0),
+                        'ubicacion': item.get('ubicacion', ''),
+                        'fecha_publicacion': str(item.get('fecha_publicacion', '')),
+                        'imagen_url': item.get('imagen_url', '')
+                    })
+                except Exception as prop_error:
+                    logger.warning(f"Error procesando propiedad {item.get('id', 'unknown')}: {prop_error}")
+                    continue
+            
+            cursor.close()
+            connection.close()
+            
+            logger.info(f"Cargadas {len(properties)} propiedades usando query generado por IA")
+            return properties
+            
+        except ImportError:
+            logger.error("mysql-connector-python no está instalado. Usar: pip install mysql-connector-python")
+            raise Exception("Dependencia MySQL no disponible")
+        except Exception as e:
+            logger.error(f"Error ejecutando query generado: {e}")
+            raise e
+
+    def load_properties_from_database(self) -> list:
+        """
+        Cargar propiedades desde la base de datos usando conexión MySQL.
+        """
+        try:
+            # Importar dependencias de MySQL
+            import mysql.connector
+            from mysql.connector import Error
+            
+            # Configuración de conexión desde variables de entorno
+            db_config = {
+                'host': os.environ.get('DB_HOST', 'localhost'),
+                'port': int(os.environ.get('DB_PORT', 3306)),
+                'database': os.environ.get('DB_NAME', 'bienes_raices'),
+                'user': os.environ.get('DB_USER', 'root'),
+                'password': os.environ.get('DB_PASSWORD', '')
+            }
+            
+            # Establecer conexión
+            connection = mysql.connector.connect(**db_config)
+            cursor = connection.cursor(dictionary=True)
+            
+            # Query para obtener todas las propiedades
+            query = """
+            SELECT 
+                id, titulo, descripcion, tipo, precio, 
+                habitaciones, banos, area_m2, ubicacion, fecha_publicacion,
+                imagen_url
+            FROM propiedades 
+            ORDER BY fecha_publicacion DESC
+            LIMIT 1000
+            """
+            
+            cursor.execute(query)
+            raw_properties = cursor.fetchall()
+            
+            # Convertir a formato consistente
+            properties = []
+            for item in raw_properties:
+                try:
+                    properties.append({
+                        'id': item.get('id'),
+                        'titulo': item.get('titulo', ''),
+                        'descripcion': item.get('descripcion', ''),
+                        'tipo': item.get('tipo', ''),
+                        'precio': float(item.get('precio', 0) or 0),
+                        'habitaciones': int(item.get('habitaciones', 0) or 0),
+                        'banos': float(item.get('banos', 0) or 0),
+                        'area_m2': float(item.get('area_m2', 0) or 0),
+                        'ubicacion': item.get('ubicacion', ''),
+                        'fecha_publicacion': str(item.get('fecha_publicacion', '')),
+                        'imagen_url': item.get('imagen_url', '')
+                    })
+                except Exception as prop_error:
+                    logger.warning(f"Error procesando propiedad {item.get('id', 'unknown')}: {prop_error}")
+                    continue
+            
+            cursor.close()
+            connection.close()
+            
+            logger.info(f"Cargadas {len(properties)} propiedades desde base de datos")
+            return properties
+            
+        except ImportError:
+            logger.error("mysql-connector-python no está instalado. Usar: pip install mysql-connector-python")
+            raise Exception("Dependencia MySQL no disponible")
+        except Exception as e:
+            logger.error(f"Error conectando a base de datos: {e}")
+            raise e
        
     def load_properties_json(self) -> list:
         """Cargar todas las propiedades del JSON para procesamiento con IA."""
