@@ -85,16 +85,16 @@ class PropertySearchService:
         # Patrones: "menos de X mil/millón", "más de X mil/millón"
         import re
         
-        # Patrón: menos/hasta de [número] mil/millón/millones
-        match_menos = re.search(r'(menos|hasta|máximo|max)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
+        # Patrón: menos/hasta de [número] mil/millón/millones (con soporte de acentos)
+        match_menos = re.search(r'(menos|hasta|máximo|maximo|max)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil(?:es|lones)?|mill[oó]n(?:es)?|k|m)?', query_lower)
         if match_menos:
             num = float(match_menos.group(2))
             multiplicador = match_menos.group(3)
             
             # Aplicar multiplicador
-            if multiplicador in ['mil', 'k']:
+            if multiplicador and multiplicador in ['mil', 'k']:
                 num *= 1000
-            elif multiplicador in ['millon', 'millones', 'm']:
+            elif multiplicador and 'mill' in multiplicador:  # millón, millon, millones
                 num *= 1000000
             
             # Si el número es mayor a 1000, asumimos que es precio
@@ -103,16 +103,16 @@ class PropertySearchService:
                 precio_detectado = True
                 logger.info(f"Detectado precio máximo: {num} desde '{match_menos.group(0)}'")
         
-        # Patrón: más/desde de [número] mil/millón
-        match_mas = re.search(r'(más|mas|desde|mínimo|min|mayor)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
+        # Patrón: más/desde de [número] mil/millón (con soporte de acentos)
+        match_mas = re.search(r'(más|mas|desde|mínimo|minimo|min|mayor)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil(?:es|lones)?|mill[oó]n(?:es)?|k|m)?', query_lower)
         if match_mas:
             num = float(match_mas.group(2))
             multiplicador = match_mas.group(3)
             
             # Aplicar multiplicador
-            if multiplicador in ['mil', 'k']:
+            if multiplicador and multiplicador in ['mil', 'k']:
                 num *= 1000
-            elif multiplicador in ['millon', 'millones', 'm']:
+            elif multiplicador and 'mill' in multiplicador:  # millón, millon, millones
                 num *= 1000000
             
             # Si el número es mayor a 1000, asumimos que es precio
@@ -122,18 +122,34 @@ class PropertySearchService:
                 logger.info(f"Detectado precio mínimo: {num} desde '{match_mas.group(0)}'")
         
         # Patrón: entre X y Y (mil/millón)
-        match_entre = re.search(r'entre\s+(\d+(?:\.\d+)?)\s+y\s+(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
-        if match_entre:
-            num1 = float(match_entre.group(1))
-            num2 = float(match_entre.group(2))
-            multiplicador = match_entre.group(3)
+        # Ahora soporta dos formatos:
+        # 1. "entre 200 y 400 mil" (multiplicador solo al final)
+        # 2. "entre 200 mil y 300 mil" (multiplicador en ambos números)
+        
+        # Primero intentar con multiplicadores individuales: "entre X mil y Y mil"
+        # Soporta: mil, millón, millones, k, m (con o sin acento)
+        match_entre_doble = re.search(r'entre\s+(\d+(?:\.\d+)?)\s*(mil(?:es|lones)?|mill[oó]n(?:es)?|k|m)?\s+y\s+(\d+(?:\.\d+)?)\s*(mil(?:es|lones)?|mill[oó]n(?:es)?|k|m)?', query_lower)
+        if match_entre_doble:
+            num1 = float(match_entre_doble.group(1))
+            mult1 = match_entre_doble.group(2)
+            num2 = float(match_entre_doble.group(3))
+            mult2 = match_entre_doble.group(4)
             
-            # Aplicar multiplicador
-            if multiplicador in ['mil', 'k']:
+            # Si solo el segundo número tiene multiplicador, aplicarlo a ambos
+            # Ejemplo: "entre 200 y 400 mil" → ambos se multiplican por mil
+            if mult2 and not mult1:
+                mult1 = mult2
+            
+            # Aplicar multiplicador al primer número
+            if mult1 and mult1 in ['mil', 'k']:
                 num1 *= 1000
-                num2 *= 1000
-            elif multiplicador in ['millon', 'millones', 'm']:
+            elif mult1 and 'mill' in mult1:  # millón, millon, millones
                 num1 *= 1000000
+            
+            # Aplicar multiplicador al segundo número
+            if mult2 and mult2 in ['mil', 'k']:
+                num2 *= 1000
+            elif mult2 and 'mill' in mult2:  # millón, millon, millones
                 num2 *= 1000000
             
             # Si son precios razonables
@@ -141,11 +157,11 @@ class PropertySearchService:
                 filters['precio_min'] = min(num1, num2)
                 filters['precio_max'] = max(num1, num2)
                 precio_detectado = True
-                logger.info(f"Detectado rango de precio: {num1} - {num2} desde '{match_entre.group(0)}'")
+                logger.info(f"Detectado rango de precio: {num1} - {num2} desde '{match_entre_doble.group(0)}'")
         
-        # Patrón adicional: "X millón" o "X millones" sin "entre"
+        # Patrón adicional: "X millón" o "X millones" sin "entre" (con soporte de acentos)
         if not precio_detectado:
-            match_millones = re.search(r'(\d+(?:\.\d+)?)\s+(millon|millones)', query_lower)
+            match_millones = re.search(r'(\d+(?:\.\d+)?)\s+(mill[oó]n(?:es)?)', query_lower)
             if match_millones:
                 num = float(match_millones.group(1)) * 1000000
                 # Buscar modificadores cerca
