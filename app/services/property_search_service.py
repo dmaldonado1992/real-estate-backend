@@ -78,7 +78,93 @@ class PropertySearchService:
         elif any(word in query_lower for word in ['terreno', 'terrenos', 'lote', 'lotes']):
             filters['tipo'] = 'terreno'
         
-        # Análisis más preciso de números con contexto
+        # DETECCIÓN MEJORADA DE RANGOS DE PRECIO
+        # Detectar frases como "menos de X mil", "más de X mil", "entre X y Y"
+        precio_detectado = False
+        
+        # Patrones: "menos de X mil/millón", "más de X mil/millón"
+        import re
+        
+        # Patrón: menos/hasta de [número] mil/millón/millones
+        match_menos = re.search(r'(menos|hasta|máximo|max)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
+        if match_menos:
+            num = float(match_menos.group(2))
+            multiplicador = match_menos.group(3)
+            
+            # Aplicar multiplicador
+            if multiplicador in ['mil', 'k']:
+                num *= 1000
+            elif multiplicador in ['millon', 'millones', 'm']:
+                num *= 1000000
+            
+            # Si el número es mayor a 1000, asumimos que es precio
+            if num >= 1000:
+                filters['precio_max'] = num
+                precio_detectado = True
+                logger.info(f"Detectado precio máximo: {num} desde '{match_menos.group(0)}'")
+        
+        # Patrón: más/desde de [número] mil/millón
+        match_mas = re.search(r'(más|mas|desde|mínimo|min|mayor)\s+(?:de\s+)?(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
+        if match_mas:
+            num = float(match_mas.group(2))
+            multiplicador = match_mas.group(3)
+            
+            # Aplicar multiplicador
+            if multiplicador in ['mil', 'k']:
+                num *= 1000
+            elif multiplicador in ['millon', 'millones', 'm']:
+                num *= 1000000
+            
+            # Si el número es mayor a 1000, asumimos que es precio
+            if num >= 1000:
+                filters['precio_min'] = num
+                precio_detectado = True
+                logger.info(f"Detectado precio mínimo: {num} desde '{match_mas.group(0)}'")
+        
+        # Patrón: entre X y Y (mil/millón)
+        match_entre = re.search(r'entre\s+(\d+(?:\.\d+)?)\s+y\s+(\d+(?:\.\d+)?)\s*(mil|millon|millones|k|m)?', query_lower)
+        if match_entre:
+            num1 = float(match_entre.group(1))
+            num2 = float(match_entre.group(2))
+            multiplicador = match_entre.group(3)
+            
+            # Aplicar multiplicador
+            if multiplicador in ['mil', 'k']:
+                num1 *= 1000
+                num2 *= 1000
+            elif multiplicador in ['millon', 'millones', 'm']:
+                num1 *= 1000000
+                num2 *= 1000000
+            
+            # Si son precios razonables
+            if num1 >= 1000 and num2 >= 1000:
+                filters['precio_min'] = min(num1, num2)
+                filters['precio_max'] = max(num1, num2)
+                precio_detectado = True
+                logger.info(f"Detectado rango de precio: {num1} - {num2} desde '{match_entre.group(0)}'")
+        
+        # Patrón adicional: "X millón" o "X millones" sin "entre"
+        if not precio_detectado:
+            match_millones = re.search(r'(\d+(?:\.\d+)?)\s+(millon|millones)', query_lower)
+            if match_millones:
+                num = float(match_millones.group(1)) * 1000000
+                # Buscar modificadores cerca
+                idx = query_lower.find(match_millones.group(0))
+                context_before = query_lower[max(0, idx-15):idx]
+                
+                if any(mod in context_before for mod in ['menos', 'hasta', 'máximo', 'maximo', 'max']):
+                    filters['precio_max'] = num
+                    precio_detectado = True
+                elif any(mod in context_before for mod in ['más', 'mas', 'desde', 'mínimo', 'minimo', 'min']):
+                    filters['precio_min'] = num
+                    precio_detectado = True
+                else:
+                    # Asumir exacto si no hay modificador
+                    filters['precio_exacto'] = num
+                    filters['precio_tolerancia'] = 0.10
+                    precio_detectado = True
+        
+        # Análisis más preciso de números con contexto (solo si no se detectó precio arriba)
         for i, num in enumerate(numbers):
             # Buscar el contexto alrededor del número
             num_str = str(int(num)) if num == int(num) else str(num)
@@ -87,9 +173,9 @@ class PropertySearchService:
             if num_index == -1:
                 continue
                 
-            # Contexto antes y después del número (20 caracteres cada lado)
-            start_context = max(0, num_index - 20)
-            end_context = min(len(query_lower), num_index + len(num_str) + 20)
+            # Contexto antes y después del número (30 caracteres cada lado para mejor detección)
+            start_context = max(0, num_index - 30)
+            end_context = min(len(query_lower), num_index + len(num_str) + 30)
             context = query_lower[start_context:end_context]
             
             # Filtros de habitaciones (MÁS ESTRICTO)
@@ -117,18 +203,39 @@ class PropertySearchService:
                         filters['area_tolerancia'] = 0.05  # Reducir tolerancia a 5%
                     continue
             
-            # Filtros de precio (MÁS ESTRICTO)
-            if any(keyword in context for keyword in ['precio', 'cuesta', 'vale', '$', 'quetzales', 'q', 'dolar', 'dolares']):
-                if num > 1000:  # Debe ser un precio razonable
-                    # Verificar modificadores
-                    if any(mod in context for mod in ['hasta', 'máximo', 'max', 'menos']):
-                        filters['precio_max'] = num
-                    elif any(mod in context for mod in ['desde', 'mínimo', 'min', 'más', 'mayor']):
-                        filters['precio_min'] = num
-                    else:
-                        filters['precio_exacto'] = num
-                        filters['precio_tolerancia'] = 0.05  # Reducir tolerancia a 5%
-                    continue
+            # Filtros de precio (solo si no fue detectado con regex arriba)
+            if not precio_detectado:
+                if any(keyword in context for keyword in ['precio', 'cuesta', 'vale', '$', 'quetzales', 'q', 'dolar', 'dolares', 'presupuesto', 'costo']):
+                    if num > 1000:  # Debe ser un precio razonable
+                        # Verificar modificadores
+                        if any(mod in context for mod in ['hasta', 'máximo', 'max', 'menos']):
+                            filters['precio_max'] = num
+                        elif any(mod in context for mod in ['desde', 'mínimo', 'min', 'más', 'mayor']):
+                            filters['precio_min'] = num
+                        else:
+                            filters['precio_exacto'] = num
+                            filters['precio_tolerancia'] = 0.05  # Reducir tolerancia a 5%
+                        continue
+        
+        # Si hay número grande sin contexto específico, asumirlo como precio
+        if not precio_detectado and not filters:
+            for num in numbers:
+                # Si es un número muy grande (> 50000), probablemente es precio
+                if num >= 50000:
+                    # Buscar modificadores alrededor
+                    num_str = str(int(num))
+                    num_index = query_lower.find(num_str)
+                    if num_index != -1:
+                        context = query_lower[max(0, num_index - 20):min(len(query_lower), num_index + len(num_str) + 20)]
+                        
+                        if any(mod in context for mod in ['menos', 'hasta', 'máximo', 'max']):
+                            filters['precio_max'] = num
+                        elif any(mod in context for mod in ['más', 'mas', 'desde', 'mínimo', 'min', 'mayor']):
+                            filters['precio_min'] = num
+                        else:
+                            filters['precio_exacto'] = num
+                            filters['precio_tolerancia'] = 0.10
+                        break
         
         # Filtro de ubicación específica (MEJORADO)
         # Zonas de Guatemala (más específico)

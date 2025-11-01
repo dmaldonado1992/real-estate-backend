@@ -140,6 +140,22 @@ async def search_ia_real_state(request: SearchRealStateRequest) -> SearchRealSta
             query=request.query,
             use_cloud=request.use_cloud
         )
+        # Sanitizar propiedades para reducir tamaño del payload y memoria
+        props = result.get('properties', []) or []
+        sanitized = []
+        for p in props[:50]:  # limitar a 50 propiedades por respuesta
+            sanitized.append({
+                'id': p.get('id'),
+                'titulo': p.get('titulo'),
+                'ubicacion': p.get('ubicacion'),
+                'precio': p.get('precio'),
+                'habitaciones': p.get('habitaciones'),
+                'banos': p.get('banos'),
+                'area_m2': p.get('area_m2'),
+                'imagen_url': p.get('imagen_url'),
+                'descripcion': (p.get('descripcion') or '')[:400]
+            })
+        result['properties'] = sanitized
         return SearchRealStateResponse(**result)
     except Exception as e:
         raise HTTPException(
