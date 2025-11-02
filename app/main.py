@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from dotenv import load_dotenv
 import os
 from pathlib import Path
@@ -48,6 +48,13 @@ async def health_check():
     Endpoint de health check para Docker
     """
     return {"status": "ok", "service": "backend-api"}
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """
+    Redireccionar de la raíz a /docs
+    """
+    return RedirectResponse(url="/docs")
 
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():

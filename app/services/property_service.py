@@ -69,14 +69,31 @@ class PropertyMapper:
     @staticmethod
     def to_product(property_dict: dict) -> Product:
         """Convertir diccionario a modelo Product"""
+        from datetime import date
         if not property_dict:
-            return None
-        
+            # Retornar un Product vacío con valores por defecto
+            return Product(
+                id=0,
+                titulo='',
+                descripcion='',
+                tipo='casa',
+                precio=0.0,
+                habitaciones=0,
+                banos=0.0,
+                area_m2=0.0,
+                ubicacion='',
+                fecha_publicacion=date.today(),
+                imagen_url=''
+            )
         # Convertir fecha si es necesario
         fecha_pub = DateConverter.to_date(property_dict.get('fecha_publicacion'))
-        
+        if fecha_pub is None:
+            fecha_pub = date.today()
+        id_value = property_dict.get('id')
+        if id_value is None:
+            id_value = 0
         return Product(
-            id=property_dict.get('id'),
+            id=id_value,
             titulo=property_dict.get('titulo', ''),
             descripcion=property_dict.get('descripcion', ''),
             tipo=property_dict.get('tipo', 'casa'),
@@ -151,14 +168,14 @@ class PropertyService(IPropertyService):
             'sql': sql_query
         }
     
-    def get_property_by_id(self, property_id: int) -> Optional[Product]:
+    def get_property_by_id(self, property_id: int) -> Product:
         """
         Obtener una propiedad específica por ID
-        Retorna None si no existe
+        Retorna un Product vacío si no existe
         """
         property_dict = self.repository.find_by_id(property_id)
-        if not property_dict:
-            return None
+        if property_dict is None:
+            property_dict = {}
         return self.mapper.to_product(property_dict)
     
     def create_property(self, product: Product) -> Optional[Product]:
